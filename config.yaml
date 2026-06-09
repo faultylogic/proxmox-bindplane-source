@@ -1,0 +1,17 @@
+proxmox:
+  host: "192.168.1.1"          # PROXMOX_HOST
+  port: 8006                    # PROXMOX_PORT
+  username: "monitoring@pam"    # PROXMOX_USERNAME
+  token_name: "dynatrace"       # PROXMOX_TOKEN_NAME
+  token_value: "xxx"            # PROXMOX_TOKEN_VALUE  — override via env var
+  verify_ssl: false             # PROXMOX_VERIFY_SSL
+
+otlp:
+  endpoint: "http://192.168.1.190:4317"  # OTLP_ENDPOINT
+  insecure: true                          # OTLP_INSECURE
+  headers: {}                             # OTLP_HEADERS (JSON string in env var)
+
+collector:
+  interval_seconds: 60          # COLLECTION_INTERVAL_SECONDS
+  service_name: "proxmox-collector"
+  service_version: "1.0.0"

@@ -1,0 +1,44 @@
+# Example BindPlane pipeline: Proxmox OTLP collector → Dynatrace
+# Configure via the BindPlane UI or bindplanectl — this is a conceptual reference.
+
+pipeline:
+  sources:
+    - name: proxmox-otlp
+      type: otlp
+      # BindPlane's built-in OTLP receiver on 0.0.0.0:4317 accepts the push
+      # from the proxmox-collector container.  No additional source plugin needed
+      # if you're pointing the collector directly at BindPlane's gRPC port.
+
+  processors:
+    # Optional: rename proxmox.* → custom.proxmox.* so Dynatrace ingests them
+    # as custom metrics (required if your DT environment enforces the custom.* prefix).
+    - name: rename-metrics
+      type: metricstransform
+      config:
+        transforms:
+          - include: "proxmox\\..*"
+            match_type: regexp
+            action: update
+            new_name: "custom.{{metric_name}}"
+
+    # Optional: add a static attribute to all metrics for easy filtering in DT.
+    - name: add-source-attribute
+      type: attributes
+      config:
+        actions:
+          - key: collector.source
+            value: proxmox-bindplane
+            action: insert
+
+  destinations:
+    - name: dynatrace
+      type: dynatrace
+      config:
+        endpoint: "https://YOUR_TENANT.live.dynatrace.com/api/v2/otlp"
+        api_token: "YOUR_DT_API_TOKEN"   # dt0c01.*** token with metrics.ingest scope
+
+# Quick bindplanectl commands (if you use the CLI):
+#
+#   bindplanectl apply -f pipeline-example.yaml
+#   bindplanectl get pipelines
+#   bindplanectl rollout start proxmox-otlp-pipeline

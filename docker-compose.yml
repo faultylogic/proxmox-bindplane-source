@@ -1,0 +1,19 @@
+version: "3.8"
+services:
+  proxmox-collector:
+    build: .
+    restart: unless-stopped
+    environment:
+      - PROXMOX_HOST=192.168.1.1
+      - PROXMOX_PORT=8006
+      - PROXMOX_USERNAME=monitoring@pam
+      - PROXMOX_TOKEN_NAME=dynatrace
+      - PROXMOX_TOKEN_VALUE=your-token-here
+      - PROXMOX_VERIFY_SSL=false
+      - OTLP_ENDPOINT=http://192.168.1.190:4317
+      - OTLP_INSECURE=true
+      - COLLECTION_INTERVAL_SECONDS=60
+      - SERVICE_NAME=proxmox-collector
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro

@@ -1,0 +1,17 @@
+# BindPlane Source: OTLP receiver for the Proxmox collector
+# Apply this in the BindPlane UI under Sources > Custom (OpenTelemetry receiver)
+# This source listens for the OTLP push from the proxmox-collector container.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: "0.0.0.0:4317"
+      http:
+        endpoint: "0.0.0.0:4318"
+
+# Notes:
+# - The proxmox-collector pushes to this OTLP endpoint on its configured interval.
+# - BindPlane already exposes 4317 (gRPC) by default; no extra source may be needed
+#   if you point the collector directly at BindPlane's built-in OTLP receiver.
+# - Metrics arrive under the "proxmox-collector" service.name resource attribute.
