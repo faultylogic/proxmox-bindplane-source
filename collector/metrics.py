@@ -71,6 +71,14 @@ class ProxmoxMetricsCollector:
         self._meter = meter
         self._setup_instruments()
 
+    @staticmethod
+    def _set(gauge, value, attributes: dict):
+        """Cast value to float before recording — Proxmox API can return strings."""
+        try:
+            gauge.set(float(value), attributes=attributes)
+        except (TypeError, ValueError):
+            logger.debug("Skipping non-numeric value %r for attributes %s", value, attributes)
+
     def _setup_instruments(self):
         m = self._meter
 
@@ -268,8 +276,8 @@ class ProxmoxMetricsCollector:
                     nodes_online += 1
 
         dims = {"cluster_name": cluster_name}
-        self._cluster_nodes_total.set(nodes_total, attributes=dims)
-        self._cluster_nodes_online.set(nodes_online, attributes=dims)
+        self._set(self._cluster_nodes_total, nodes_total, attributes=dims)
+        self._set(self._cluster_nodes_online, nodes_online, attributes=dims)
         logger.debug("Cluster %s: %d/%d nodes online", cluster_name, nodes_online, nodes_total)
         return cluster_name
 
@@ -282,13 +290,13 @@ class ProxmoxMetricsCollector:
             for item in self._client.get_ha_status():
                 if item.get("type") == "quorum":
                     quorate = 1 if item.get("quorate", 0) else 0
-            self._cluster_ha_quorate.set(quorate, attributes=dims)
+            self._set(self._cluster_ha_quorate, quorate, attributes=dims)
 
             for resource in self._client.get_ha_resources():
                 sid = resource.get("sid", "unknown")
                 state = resource.get("state", "")
                 rdims = {"ha_resource": sid, "cluster_name": cluster_name}
-                self._cluster_ha_resource_running.set(1 if state == "started" else 0, attributes=rdims)
+                self._set(self._cluster_ha_resource_running, 1 if state == "started" else 0, attributes=rdims)
         except Exception:
             logger.exception("Error collecting HA metrics")
 
@@ -299,11 +307,11 @@ class ProxmoxMetricsCollector:
             for job in self._client.get_replication_jobs():
                 job_id = job.get("id", "unknown")
                 rdims = {"replication_job": job_id, "cluster_name": cluster_name}
-                self._cluster_replication_fail_count.set(job.get("fail_count", 0), attributes=rdims)
+                self._set(self._cluster_replication_fail_count, job.get("fail_count", 0), attributes=rdims)
                 duration = job.get("duration", 0)
                 if duration:
-                    self._cluster_replication_duration.set(duration, attributes=rdims)
-                self._cluster_replication_error.set(1 if job.get("error") else 0, attributes=rdims)
+                    self._set(self._cluster_replication_duration, duration, attributes=rdims)
+                self._set(self._cluster_replication_error, 1 if job.get("error") else 0, attributes=rdims)
         except Exception:
             logger.exception("Error collecting replication metrics")
 
@@ -312,7 +320,7 @@ class ProxmoxMetricsCollector:
     def _collect_backups(self, cluster_name: str):
         try:
             dims = {"cluster_name": cluster_name}
-            self._cluster_backup_unprotected_guests.set(
+            self._set(self._cluster_backup_unprotected_guests, 
                 len(self._client.get_not_backed_up()), attributes=dims
             )
         except Exception:
@@ -327,31 +335,31 @@ class ProxmoxMetricsCollector:
 
             health_str = status.get("health", {}).get("status", "HEALTH_UNKNOWN")
             health_val = {"HEALTH_OK": 2, "HEALTH_WARN": 1, "HEALTH_ERR": 0}.get(health_str, -1)
-            self._ceph_health.set(health_val, attributes=dims)
+            self._set(self._ceph_health, health_val, attributes=dims)
 
             osdmap = status.get("osdmap", {})
-            self._ceph_osd_total.set(osdmap.get("num_osds", 0), attributes=dims)
-            self._ceph_osd_up.set(osdmap.get("num_up_osds", 0), attributes=dims)
-            self._ceph_osd_in.set(osdmap.get("num_in_osds", 0), attributes=dims)
+            self._set(self._ceph_osd_total, osdmap.get("num_osds", 0), attributes=dims)
+            self._set(self._ceph_osd_up, osdmap.get("num_up_osds", 0), attributes=dims)
+            self._set(self._ceph_osd_in, osdmap.get("num_in_osds", 0), attributes=dims)
 
             pgmap = status.get("pgmap", {})
-            self._ceph_pg_total.set(pgmap.get("num_pgs", 0), attributes=dims)
-            self._ceph_bytes_used.set(pgmap.get("bytes_used", 0), attributes=dims)
-            self._ceph_bytes_avail.set(pgmap.get("bytes_avail", 0), attributes=dims)
-            self._ceph_bytes_total.set(pgmap.get("bytes_total", 0), attributes=dims)
-            self._ceph_io_read_bps.set(pgmap.get("read_bytes_sec", 0), attributes=dims)
-            self._ceph_io_write_bps.set(pgmap.get("write_bytes_sec", 0), attributes=dims)
-            self._ceph_io_recovering_bps.set(pgmap.get("recovering_bytes_per_sec", 0), attributes=dims)
+            self._set(self._ceph_pg_total, pgmap.get("num_pgs", 0), attributes=dims)
+            self._set(self._ceph_bytes_used, pgmap.get("bytes_used", 0), attributes=dims)
+            self._set(self._ceph_bytes_avail, pgmap.get("bytes_avail", 0), attributes=dims)
+            self._set(self._ceph_bytes_total, pgmap.get("bytes_total", 0), attributes=dims)
+            self._set(self._ceph_io_read_bps, pgmap.get("read_bytes_sec", 0), attributes=dims)
+            self._set(self._ceph_io_write_bps, pgmap.get("write_bytes_sec", 0), attributes=dims)
+            self._set(self._ceph_io_recovering_bps, pgmap.get("recovering_bytes_per_sec", 0), attributes=dims)
 
             monmap = status.get("monmap", {})
-            self._ceph_mon_count.set(monmap.get("num_mons", 0), attributes=dims)
+            self._set(self._ceph_mon_count, monmap.get("num_mons", 0), attributes=dims)
 
             try:
                 for flag in self._client.get_ceph_flags():
                     name = flag.get("name", "")
                     if name in ("noout", "noin", "nodown", "pause", "full", "nearfull"):
                         fdims = {"ceph_flag": name, "cluster_name": cluster_name}
-                        self._ceph_flag.set(1 if flag.get("value") else 0, attributes=fdims)
+                        self._set(self._ceph_flag, 1 if flag.get("value") else 0, attributes=fdims)
             except Exception:
                 logger.debug("Ceph flags not available")
 
@@ -370,44 +378,44 @@ class ProxmoxMetricsCollector:
                 dims = {"node_name": node, "cluster_name": cluster_name}
 
                 # CPU
-                self._node_cpu_usage.set(status.get("cpu", 0) * 100, attributes=dims)
+                self._set(self._node_cpu_usage, status.get("cpu", 0) * 100, attributes=dims)
                 cpuinfo = status.get("cpuinfo", {})
-                self._node_cpu_count.set(cpuinfo.get("cpus", 0), attributes=dims)
-                self._node_cpu_sockets.set(cpuinfo.get("sockets", 0), attributes=dims)
+                self._set(self._node_cpu_count, cpuinfo.get("cpus", 0), attributes=dims)
+                self._set(self._node_cpu_sockets, cpuinfo.get("sockets", 0), attributes=dims)
 
                 # Load average
                 loadavg = status.get("loadavg", [0, 0, 0])
-                self._node_loadavg_1m.set(float(loadavg[0]) if len(loadavg) > 0 else 0, attributes=dims)
-                self._node_loadavg_5m.set(float(loadavg[1]) if len(loadavg) > 1 else 0, attributes=dims)
-                self._node_loadavg_15m.set(float(loadavg[2]) if len(loadavg) > 2 else 0, attributes=dims)
+                self._set(self._node_loadavg_1m, float(loadavg[0]) if len(loadavg) > 0 else 0, attributes=dims)
+                self._set(self._node_loadavg_5m, float(loadavg[1]) if len(loadavg) > 1 else 0, attributes=dims)
+                self._set(self._node_loadavg_15m, float(loadavg[2]) if len(loadavg) > 2 else 0, attributes=dims)
 
                 # Memory
                 mem = status.get("memory", {})
-                self._node_memory_used.set(mem.get("used", 0), attributes=dims)
-                self._node_memory_total.set(mem.get("total", 0), attributes=dims)
-                self._node_memory_free.set(mem.get("free", 0), attributes=dims)
+                self._set(self._node_memory_used, mem.get("used", 0), attributes=dims)
+                self._set(self._node_memory_total, mem.get("total", 0), attributes=dims)
+                self._set(self._node_memory_free, mem.get("free", 0), attributes=dims)
 
                 # Swap
                 swap = status.get("swap", {})
-                self._node_swap_used.set(swap.get("used", 0), attributes=dims)
-                self._node_swap_total.set(swap.get("total", 0), attributes=dims)
-                self._node_swap_free.set(swap.get("free", 0), attributes=dims)
+                self._set(self._node_swap_used, swap.get("used", 0), attributes=dims)
+                self._set(self._node_swap_total, swap.get("total", 0), attributes=dims)
+                self._set(self._node_swap_free, swap.get("free", 0), attributes=dims)
 
                 # Root filesystem
                 disk = status.get("rootfs", {})
-                self._node_disk_used.set(disk.get("used", 0), attributes=dims)
-                self._node_disk_total.set(disk.get("total", 0), attributes=dims)
-                self._node_disk_avail.set(disk.get("avail", 0), attributes=dims)
+                self._set(self._node_disk_used, disk.get("used", 0), attributes=dims)
+                self._set(self._node_disk_total, disk.get("total", 0), attributes=dims)
+                self._set(self._node_disk_avail, disk.get("avail", 0), attributes=dims)
 
                 # Network (aggregate)
-                self._node_network_in.set(node_summary.get("netin", 0), attributes=dims)
-                self._node_network_out.set(node_summary.get("netout", 0), attributes=dims)
+                self._set(self._node_network_in, node_summary.get("netin", 0), attributes=dims)
+                self._set(self._node_network_out, node_summary.get("netout", 0), attributes=dims)
 
                 # Uptime / KSM
-                self._node_uptime.set(status.get("uptime", 0), attributes=dims)
+                self._set(self._node_uptime, status.get("uptime", 0), attributes=dims)
                 ksm = status.get("ksm", {})
                 if ksm:
-                    self._node_ksm_shared.set(ksm.get("shared", 0), attributes=dims)
+                    self._set(self._node_ksm_shared, ksm.get("shared", 0), attributes=dims)
 
                 logger.debug("Collected live metrics for node %s", node)
 
@@ -441,15 +449,15 @@ class ProxmoxMetricsCollector:
 
             iowait = _latest(rrd, "iowait")
             if iowait is not None:
-                self._node_cpu_iowait.set(iowait * 100, attributes=dims)
+                self._set(self._node_cpu_iowait, iowait * 100, attributes=dims)
 
             memavail = _latest(rrd, "memavailable")
             if memavail is not None:
-                self._node_memory_available.set(memavail, attributes=dims)
+                self._set(self._node_memory_available, memavail, attributes=dims)
 
             arcsize = _latest(rrd, "arcsize")
             if arcsize is not None:
-                self._node_zfs_arcsize.set(arcsize, attributes=dims)
+                self._set(self._node_zfs_arcsize, arcsize, attributes=dims)
 
             for field, gauge in (
                 ("pressurecpusome",    self._node_pressure_cpu_some),
@@ -472,7 +480,7 @@ class ProxmoxMetricsCollector:
                     continue
                 active = 1 if svc.get("active-state", svc.get("state", "")) == "active" else 0
                 sdims = {"service_name": name, "node_name": node, "cluster_name": cluster_name}
-                self._node_service_status.set(active, attributes=sdims)
+                self._set(self._node_service_status, active, attributes=sdims)
         except Exception:
             logger.exception("Error collecting service metrics for node %s", node)
 
@@ -481,7 +489,7 @@ class ProxmoxMetricsCollector:
             sub = self._client.get_node_subscription(node)
             active = 1 if sub.get("status", "notfound") == "active" else 0
             dims = {"node_name": node, "cluster_name": cluster_name}
-            self._node_subscription_active.set(active, attributes=dims)
+            self._set(self._node_subscription_active, active, attributes=dims)
         except Exception:
             logger.debug("Could not collect subscription for node %s", node)
 
@@ -490,8 +498,8 @@ class ProxmoxMetricsCollector:
             updates = self._client.get_node_apt_updates(node)
             proxmox_updates = sum(1 for u in updates if "proxmox" in u.get("Origin", "").lower())
             dims = {"node_name": node, "cluster_name": cluster_name}
-            self._node_updates_pending.set(len(updates), attributes=dims)
-            self._node_updates_proxmox_pending.set(proxmox_updates, attributes=dims)
+            self._set(self._node_updates_pending, len(updates), attributes=dims)
+            self._set(self._node_updates_proxmox_pending, proxmox_updates, attributes=dims)
         except Exception:
             logger.debug("Could not collect apt updates for node %s", node)
 
@@ -503,8 +511,8 @@ class ProxmoxMetricsCollector:
                 if not vmid or not dev:
                     continue
                 idims = {"vmid": vmid, "iface": dev, "node_name": node, "cluster_name": cluster_name}
-                self._node_netstat_in.set(iface.get("in", 0), attributes=idims)
-                self._node_netstat_out.set(iface.get("out", 0), attributes=idims)
+                self._set(self._node_netstat_in, iface.get("in", 0), attributes=idims)
+                self._set(self._node_netstat_out, iface.get("out", 0), attributes=idims)
         except Exception:
             logger.debug("Could not collect netstat for node %s", node)
 
@@ -514,8 +522,8 @@ class ProxmoxMetricsCollector:
             error_count = sum(1 for t in tasks if t.get("status", "").startswith("FAILED"))
             running_count = sum(1 for t in tasks if not t.get("endtime"))
             dims = {"node_name": node, "cluster_name": cluster_name}
-            self._node_tasks_errors.set(error_count, attributes=dims)
-            self._node_tasks_running.set(running_count, attributes=dims)
+            self._set(self._node_tasks_errors, error_count, attributes=dims)
+            self._set(self._node_tasks_running, running_count, attributes=dims)
         except Exception:
             logger.debug("Could not collect tasks for node %s", node)
 
@@ -529,10 +537,10 @@ class ProxmoxMetricsCollector:
                     continue
                 disk_name = dev.replace("/dev/", "")
                 dims = {"disk_dev": disk_name, "node_name": node, "cluster_name": cluster_name}
-                self._node_disk_device_size.set(disk.get("size", 0), attributes=dims)
+                self._set(self._node_disk_device_size, disk.get("size", 0), attributes=dims)
                 health = disk.get("health", "")
                 health_val = 1 if health.upper() == "PASSED" else (0 if health.upper() == "FAILED" else -1)
-                self._node_disk_device_smart.set(health_val, attributes=dims)
+                self._set(self._node_disk_device_smart, health_val, attributes=dims)
                 self._collect_disk_smart(node, dev, disk_name, cluster_name)
         except Exception:
             logger.exception("Error collecting disk list for node %s", node)
@@ -556,7 +564,7 @@ class ProxmoxMetricsCollector:
                     adims = {**dims, "smart_attr": SMART_IDS[attr_id]}
                     raw = attr.get("raw", {})
                     raw_val = raw.get("value", 0) if isinstance(raw, dict) else int(raw or 0)
-                    self._node_disk_device_smart_attr.set(raw_val, attributes=adims)
+                    self._set(self._node_disk_device_smart_attr, raw_val, attributes=adims)
         except Exception:
             logger.debug("SMART data not available for %s on %s", dev, node)
 
@@ -573,27 +581,27 @@ class ProxmoxMetricsCollector:
                 dims = {"vmid": str(vmid), "vm_name": name, "node_name": node, "cluster_name": cluster_name}
 
                 vm_running = 1 if status.get("status") == "running" else 0
-                self._vm_status.set(vm_running, attributes=dims)
+                self._set(self._vm_status, vm_running, attributes=dims)
 
-                self._vm_cpu_usage.set(status.get("cpu", 0) * 100, attributes=dims)
-                self._vm_cpu_count.set(status.get("cpus", 0), attributes=dims)
+                self._set(self._vm_cpu_usage, status.get("cpu", 0) * 100, attributes=dims)
+                self._set(self._vm_cpu_count, status.get("cpus", 0), attributes=dims)
 
-                self._vm_memory_used.set(status.get("mem", 0), attributes=dims)
-                self._vm_memory_total.set(status.get("maxmem", 0), attributes=dims)
+                self._set(self._vm_memory_used, status.get("mem", 0), attributes=dims)
+                self._set(self._vm_memory_total, status.get("maxmem", 0), attributes=dims)
 
                 balloon = status.get("ballooninfo", {})
                 if balloon:
-                    self._vm_balloon_current.set(balloon.get("current_allocated", 0), attributes=dims)
-                    self._vm_balloon_target.set(balloon.get("target_allocated", 0), attributes=dims)
+                    self._set(self._vm_balloon_current, balloon.get("current_allocated", 0), attributes=dims)
+                    self._set(self._vm_balloon_target, balloon.get("target_allocated", 0), attributes=dims)
 
-                self._vm_disk_read.set(status.get("diskread", 0), attributes=dims)
-                self._vm_disk_write.set(status.get("diskwrite", 0), attributes=dims)
-                self._vm_disk_size.set(status.get("maxdisk", 0), attributes=dims)
+                self._set(self._vm_disk_read, status.get("diskread", 0), attributes=dims)
+                self._set(self._vm_disk_write, status.get("diskwrite", 0), attributes=dims)
+                self._set(self._vm_disk_size, status.get("maxdisk", 0), attributes=dims)
 
-                self._vm_network_in.set(status.get("netin", 0), attributes=dims)
-                self._vm_network_out.set(status.get("netout", 0), attributes=dims)
+                self._set(self._vm_network_in, status.get("netin", 0), attributes=dims)
+                self._set(self._vm_network_out, status.get("netout", 0), attributes=dims)
 
-                self._vm_uptime.set(status.get("uptime", 0), attributes=dims)
+                self._set(self._vm_uptime, status.get("uptime", 0), attributes=dims)
 
                 self._collect_vm_config(node, vmid, name, cluster_name)
 
@@ -614,13 +622,13 @@ class ProxmoxMetricsCollector:
         try:
             cfg = self._client.get_vm_config(node, vmid)
             dims = {"vmid": str(vmid), "vm_name": vm_name, "node_name": node, "cluster_name": cluster_name}
-            self._vm_config_cores.set(cfg.get("cores", 1), attributes=dims)
-            self._vm_config_sockets.set(cfg.get("sockets", 1), attributes=dims)
-            self._vm_config_memory_mib.set(cfg.get("memory", 0), attributes=dims)
-            self._vm_config_balloon_mib.set(cfg.get("balloon", 0), attributes=dims)
-            self._vm_config_cpulimit.set(cfg.get("cpulimit", 0), attributes=dims)
-            self._vm_config_cpuunits.set(cfg.get("cpuunits", 1024), attributes=dims)
-            self._vm_config_onboot.set(1 if cfg.get("onboot", 0) else 0, attributes=dims)
+            self._set(self._vm_config_cores, cfg.get("cores", 1), attributes=dims)
+            self._set(self._vm_config_sockets, cfg.get("sockets", 1), attributes=dims)
+            self._set(self._vm_config_memory_mib, cfg.get("memory", 0), attributes=dims)
+            self._set(self._vm_config_balloon_mib, cfg.get("balloon", 0), attributes=dims)
+            self._set(self._vm_config_cpulimit, cfg.get("cpulimit", 0), attributes=dims)
+            self._set(self._vm_config_cpuunits, cfg.get("cpuunits", 1024), attributes=dims)
+            self._set(self._vm_config_onboot, 1 if cfg.get("onboot", 0) else 0, attributes=dims)
         except Exception:
             logger.debug("Could not collect config for VM %s on %s", vmid, node)
 
@@ -633,11 +641,11 @@ class ProxmoxMetricsCollector:
 
             disk_used = _latest(rrd, "disk")
             if disk_used is not None:
-                self._vm_disk_used.set(disk_used, attributes=dims)
+                self._set(self._vm_disk_used, disk_used, attributes=dims)
 
             memhost = _latest(rrd, "memhost")
             if memhost is not None:
-                self._vm_memory_host.set(memhost, attributes=dims)
+                self._set(self._vm_memory_host, memhost, attributes=dims)
 
             for field, gauge in (
                 ("pressurecpusome",    self._vm_pressure_cpu_some),
@@ -657,7 +665,7 @@ class ProxmoxMetricsCollector:
             snaps = self._client.get_vm_snapshots(node, vmid)
             real_snaps = [s for s in snaps if s.get("name") != "current"]
             dims = {"vmid": str(vmid), "vm_name": vm_name, "node_name": node, "cluster_name": cluster_name}
-            self._vm_snapshot_count.set(len(real_snaps), attributes=dims)
+            self._set(self._vm_snapshot_count, len(real_snaps), attributes=dims)
         except Exception:
             logger.debug("Could not collect snapshots for VM %s on %s", vmid, node)
 
@@ -668,8 +676,8 @@ class ProxmoxMetricsCollector:
                 if not mp:
                     continue
                 fdims = {"vmid": str(vmid), "vm_name": vm_name, "mountpoint": mp, "node_name": node, "cluster_name": cluster_name}
-                self._vm_agent_disk_used.set(fs.get("used-bytes", 0), attributes=fdims)
-                self._vm_agent_disk_total.set(fs.get("total-bytes", 0), attributes=fdims)
+                self._set(self._vm_agent_disk_used, fs.get("used-bytes", 0), attributes=fdims)
+                self._set(self._vm_agent_disk_total, fs.get("total-bytes", 0), attributes=fdims)
         except Exception:
             logger.debug("Guest agent fsinfo not available for VM %s", vmid)
 
@@ -682,12 +690,12 @@ class ProxmoxMetricsCollector:
                 if not stats:
                     continue
                 idims = {"vmid": str(vmid), "vm_name": vm_name, "iface": iface_name, "node_name": node, "cluster_name": cluster_name}
-                self._vm_agent_net_rx_bytes.set(stats.get("rx-bytes", 0), attributes=idims)
-                self._vm_agent_net_tx_bytes.set(stats.get("tx-bytes", 0), attributes=idims)
-                self._vm_agent_net_rx_errors.set(stats.get("rx-errs", 0), attributes=idims)
-                self._vm_agent_net_tx_errors.set(stats.get("tx-errs", 0), attributes=idims)
-                self._vm_agent_net_rx_dropped.set(stats.get("rx-dropped", 0), attributes=idims)
-                self._vm_agent_net_tx_dropped.set(stats.get("tx-dropped", 0), attributes=idims)
+                self._set(self._vm_agent_net_rx_bytes, stats.get("rx-bytes", 0), attributes=idims)
+                self._set(self._vm_agent_net_tx_bytes, stats.get("tx-bytes", 0), attributes=idims)
+                self._set(self._vm_agent_net_rx_errors, stats.get("rx-errs", 0), attributes=idims)
+                self._set(self._vm_agent_net_tx_errors, stats.get("tx-errs", 0), attributes=idims)
+                self._set(self._vm_agent_net_rx_dropped, stats.get("rx-dropped", 0), attributes=idims)
+                self._set(self._vm_agent_net_tx_dropped, stats.get("tx-dropped", 0), attributes=idims)
         except Exception:
             logger.debug("Guest agent network info not available for VM %s", vmid)
 
@@ -704,23 +712,23 @@ class ProxmoxMetricsCollector:
                 dims = {"vmid": str(vmid), "lxc_name": name, "node_name": node, "cluster_name": cluster_name}
 
                 ct_running = 1 if status.get("status") == "running" else 0
-                self._lxc_status.set(ct_running, attributes=dims)
+                self._set(self._lxc_status, ct_running, attributes=dims)
 
-                self._lxc_cpu_usage.set(status.get("cpu", 0) * 100, attributes=dims)
-                self._lxc_cpu_count.set(status.get("cpus", 0), attributes=dims)
+                self._set(self._lxc_cpu_usage, status.get("cpu", 0) * 100, attributes=dims)
+                self._set(self._lxc_cpu_count, status.get("cpus", 0), attributes=dims)
 
-                self._lxc_memory_used.set(status.get("mem", 0), attributes=dims)
-                self._lxc_memory_total.set(status.get("maxmem", 0), attributes=dims)
+                self._set(self._lxc_memory_used, status.get("mem", 0), attributes=dims)
+                self._set(self._lxc_memory_total, status.get("maxmem", 0), attributes=dims)
 
-                self._lxc_swap_used.set(status.get("swap", 0), attributes=dims)
-                self._lxc_swap_total.set(status.get("maxswap", 0), attributes=dims)
+                self._set(self._lxc_swap_used, status.get("swap", 0), attributes=dims)
+                self._set(self._lxc_swap_total, status.get("maxswap", 0), attributes=dims)
 
-                self._lxc_disk_read.set(status.get("diskread", 0), attributes=dims)
-                self._lxc_disk_write.set(status.get("diskwrite", 0), attributes=dims)
-                self._lxc_disk_size.set(status.get("maxdisk", 0), attributes=dims)
+                self._set(self._lxc_disk_read, status.get("diskread", 0), attributes=dims)
+                self._set(self._lxc_disk_write, status.get("diskwrite", 0), attributes=dims)
+                self._set(self._lxc_disk_size, status.get("maxdisk", 0), attributes=dims)
 
-                self._lxc_network_in.set(status.get("netin", 0), attributes=dims)
-                self._lxc_network_out.set(status.get("netout", 0), attributes=dims)
+                self._set(self._lxc_network_in, status.get("netin", 0), attributes=dims)
+                self._set(self._lxc_network_out, status.get("netout", 0), attributes=dims)
 
                 self._collect_ct_config(node, vmid, name, cluster_name)
 
@@ -738,13 +746,13 @@ class ProxmoxMetricsCollector:
         try:
             cfg = self._client.get_container_config(node, vmid)
             dims = {"vmid": str(vmid), "lxc_name": lxc_name, "node_name": node, "cluster_name": cluster_name}
-            self._lxc_config_cores.set(cfg.get("cores", 1), attributes=dims)
-            self._lxc_config_memory_mib.set(cfg.get("memory", 0), attributes=dims)
-            self._lxc_config_swap_mib.set(cfg.get("swap", 0), attributes=dims)
-            self._lxc_config_cpulimit.set(cfg.get("cpulimit", 0), attributes=dims)
-            self._lxc_config_cpuunits.set(cfg.get("cpuunits", 1024), attributes=dims)
-            self._lxc_config_onboot.set(1 if cfg.get("onboot", 0) else 0, attributes=dims)
-            self._lxc_config_unprivileged.set(1 if cfg.get("unprivileged", 0) else 0, attributes=dims)
+            self._set(self._lxc_config_cores, cfg.get("cores", 1), attributes=dims)
+            self._set(self._lxc_config_memory_mib, cfg.get("memory", 0), attributes=dims)
+            self._set(self._lxc_config_swap_mib, cfg.get("swap", 0), attributes=dims)
+            self._set(self._lxc_config_cpulimit, cfg.get("cpulimit", 0), attributes=dims)
+            self._set(self._lxc_config_cpuunits, cfg.get("cpuunits", 1024), attributes=dims)
+            self._set(self._lxc_config_onboot, 1 if cfg.get("onboot", 0) else 0, attributes=dims)
+            self._set(self._lxc_config_unprivileged, 1 if cfg.get("unprivileged", 0) else 0, attributes=dims)
         except Exception:
             logger.debug("Could not collect config for LXC %s on %s", vmid, node)
 
@@ -757,11 +765,11 @@ class ProxmoxMetricsCollector:
 
             disk_used = _latest(rrd, "disk")
             if disk_used is not None:
-                self._lxc_disk_used.set(disk_used, attributes=dims)
+                self._set(self._lxc_disk_used, disk_used, attributes=dims)
 
             memhost = _latest(rrd, "memhost")
             if memhost is not None:
-                self._lxc_memory_host.set(memhost, attributes=dims)
+                self._set(self._lxc_memory_host, memhost, attributes=dims)
 
             for field, gauge in (
                 ("pressurecpusome",    self._lxc_pressure_cpu_some),
@@ -781,7 +789,7 @@ class ProxmoxMetricsCollector:
             snaps = self._client.get_container_snapshots(node, vmid)
             real_snaps = [s for s in snaps if s.get("name") != "current"]
             dims = {"vmid": str(vmid), "lxc_name": lxc_name, "node_name": node, "cluster_name": cluster_name}
-            self._lxc_snapshot_count.set(len(real_snaps), attributes=dims)
+            self._set(self._lxc_snapshot_count, len(real_snaps), attributes=dims)
         except Exception:
             logger.debug("Could not collect snapshots for LXC %s on %s", vmid, node)
 
@@ -794,11 +802,11 @@ class ProxmoxMetricsCollector:
                 continue
             dims = {"storage_name": name, "node_name": node, "cluster_name": cluster_name}
 
-            self._storage_used.set(storage.get("used", 0), attributes=dims)
-            self._storage_total.set(storage.get("total", 0), attributes=dims)
-            self._storage_avail.set(storage.get("avail", 0), attributes=dims)
-            self._storage_enabled.set(1 if storage.get("enabled", 1) else 0, attributes=dims)
-            self._storage_active.set(1 if storage.get("active", 0) else 0, attributes=dims)
+            self._set(self._storage_used, storage.get("used", 0), attributes=dims)
+            self._set(self._storage_total, storage.get("total", 0), attributes=dims)
+            self._set(self._storage_avail, storage.get("avail", 0), attributes=dims)
+            self._set(self._storage_enabled, 1 if storage.get("enabled", 1) else 0, attributes=dims)
+            self._set(self._storage_active, 1 if storage.get("active", 0) else 0, attributes=dims)
 
             self._collect_storage_backups(node, name, cluster_name)
 
@@ -807,6 +815,6 @@ class ProxmoxMetricsCollector:
             content = self._client.get_storage_content(node, storage)
             backup_count = sum(1 for c in content if "backup" in str(c.get("volid", "")) or c.get("content") == "backup")
             dims = {"storage_name": storage, "node_name": node, "cluster_name": cluster_name}
-            self._storage_backup_count.set(backup_count, attributes=dims)
+            self._set(self._storage_backup_count, backup_count, attributes=dims)
         except Exception:
             logger.debug("Could not collect content for storage %s on %s", storage, node)
